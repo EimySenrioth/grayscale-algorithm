@@ -1,0 +1,408 @@
+# Referencia de Métodos Java
+## Proyecto: Scharr Edge Detection
+
+Documento de referencia que indica **dónde está cada método** del proyecto, su firma, qué hace y el fragmento clave de código.
+
+---
+
+## 📁 `ScharrService.java`
+**Ruta:** `src/main/java/com/algoritmogris/service/ScharrService.java`  
+**Paquete:** `com.algoritmogris.service`  
+**Descripción:** Contiene todo el algoritmo de detección de bordes con el operador Scharr y la lógica de paralelismo con 4 hilos.
+
+---
+
+### 🔷 Clase interna: `ProcessResult` — Línea 36
+
+**Tipo:** `public static class`  
+**Propósito:** Contenedor de datos de retorno (imagen + tiempos de cada hilo).
+
+| Campo | Tipo | Descripción |
+|---|---|---|
+| `image` | `BufferedImage` | Imagen con bordes detectados |
+| `t1Nanos` | `long` | Tiempo del hilo 1 en nanosegundos |
+| `t2Nanos` | `long` | Tiempo del hilo 2 (0 si secuencial) |
+| `t3Nanos` | `long` | Tiempo del hilo 3 (0 si secuencial) |
+| `t4Nanos` | `long` | Tiempo del hilo 4 (0 si secuencial) |
+| `totalNanos` | `long` | Tiempo total de la operación |
+
+```java
+// Línea 44
+public ProcessResult(BufferedImage image, long t1, long t2, long t3, long t4, long total)
+```
+
+---
+
+### 🔷 Campos estáticos: `KERNEL_X` y `KERNEL_Y` — Líneas 19–30
+
+**Tipo:** `private static final int[][]`  
+**Propósito:** Kernels 3×3 del operador Scharr.
+
+```java
+// Línea 20 — Kernel Gx (detecta bordes verticales)
+private static final int[][] KERNEL_X = {
+    { -3,  0,  3 },
+    {-10,  0, 10 },
+    { -3,  0,  3 }
+};
+
+// Línea 26 — Kernel Gy (detecta bordes horizontales)
+private static final int[][] KERNEL_Y = {
+    { -3, -10, -3 },
+    {  0,   0,  0 },
+    {  3,  10,  3 }
+};
+```
+
+---
+
+### 🔷 Método: `toGrayPixels()` — Línea 63
+
+```java
+private int[] toGrayPixels(BufferedImage src)
+```
+
+**Propósito:** Convierte una imagen color a escala de grises usando la fórmula de luminancia ITU-R BT.601.  
+**Retorna:** Arreglo `int[]` plano con valores `[0..255]` por píxel.
+
+**Fórmula aplicada (línea 79):**
+```java
+gray[y * width + x] = (int)(0.299 * r + 0.587 * g + 0.114 * b);
+```
+
+> Los pesos reflejan la sensibilidad del ojo humano: mayor al verde, menor al azul.
+
+---
+
+### 🔷 Método: `applyScharr()` — Línea 105
+
+```java
+private void applyScharr(int[] gray, int[] out, int width, int startRow, int endRow)
+```
+
+**Propósito:** Aplica los kernels Scharr sobre un **rango de filas** (`startRow` → `endRow`). Es el núcleo del algoritmo — llamado por cada hilo con su franja exclusiva.
+
+**Parámetros:**
+
+| Parámetro | Tipo | Descripción |
+|---|---|---|
+| `gray` | `int[]` | Imagen en grises (solo lectura) |
+| `out` | `int[]` | Imagen de salida con magnitudes |
+| `width` | `int` | Ancho de la imagen |
+| `startRow` | `int` | Primera fila a procesar |
+| `endRow` | `int` | Última fila a procesar (exclusive) |
+
+**Lógica interna (líneas 111–133):**
+```java
+// Por cada pixel en el rango de filas asignado al hilo:
+for (int ky = -1; ky <= 1; ky++) {
+    for (int kx = -1; kx <= 1; kx++) {
+        int neighbor = gray[(y + ky) * width + (x + kx)];
+        gx += KERNEL_X[ky + 1][kx + 1] * neighbor;  // Línea 123
+        gy += KERNEL_Y[ky + 1][kx + 1] * neighbor;  // Línea 124
+    }
+}
+// Línea 129 — Magnitud del gradiente
+int magnitude = (int) Math.sqrt(gx * gx + gy * gy);
+// Línea 132 — Clamping a [0, 255]
+out[y * width + x] = Math.min(255, magnitude);
+```
+
+---
+
+### 🔷 Método: `processParallel()` — Línea 151
+
+```java
+public ProcessResult processParallel(BufferedImage input) throws Exception
+```
+
+**Propósito:** Procesa la imagen con **4 hilos concurrentes**, dividiendo la imagen en cuartos horizontales.
+
+**División de franjas (líneas 156–158):**
+```java
+int q1 = height / 4;      // fin del 1er cuarto
+int q2 = height / 2;      // fin del 2do cuarto
+int q3 = 3 * height / 4;  // fin del 3er cuarto
+```
+
+**Pool de hilos (línea 170):**
+```java
+ExecutorService executor = Executors.newFixedThreadPool(4);
+```
+
+**Lanzamiento concurrente (líneas 200–201):**
+```java
+var futures = executor.invokeAll(List.of(task1, task2, task3, task4));
+executor.shutdown();
+```
+
+**Retorno (línea 213):**
+```java
+return new ProcessResult(result, t1, t2, t3, t4, totalTime);
+```
+
+---
+
+### 🔷 Método: `processSequential()` — Línea 224
+
+```java
+public ProcessResult processSequential(BufferedImage input)
+```
+
+**Propósito:** Procesa toda la imagen en **un solo hilo** (sin paralelismo). Sirve de punto de comparación para medir la mejora del modo paralelo.
+
+**Medición de tiempo (líneas 230–232):**
+```java
+long start = System.nanoTime();
+applyScharr(gray, out, width, 1, height - 1);
+long t1 = System.nanoTime() - start;
+```
+
+**Retorno (línea 236):** `t2, t3, t4 = 0`
+```java
+return new ProcessResult(result, t1, 0L, 0L, 0L, t1);
+```
+
+---
+
+### 🔷 Método: `buildImage()` — Línea 249
+
+```java
+private BufferedImage buildImage(int[] pixels, int width, int height)
+```
+
+**Propósito:** Convierte el arreglo plano de magnitudes `[0..255]` en un `BufferedImage` en escala de grises lista para guardar como PNG.
+
+**Tipo de imagen (línea 251):**
+```java
+BufferedImage img = new BufferedImage(width, height, BufferedImage.TYPE_BYTE_GRAY);
+```
+
+**Empaquetado de píxeles (línea 258):**
+```java
+int rgb = (v << 16) | (v << 8) | v;  // R=G=B=v → gris puro
+img.setRGB(x, y, rgb);
+```
+
+---
+
+---
+
+## 📁 `EdgeDetectionServlet.java`
+**Ruta:** `src/main/java/com/algoritmogris/servlet/EdgeDetectionServlet.java`  
+**Paquete:** `com.algoritmogris.servlet`  
+**Anotaciones:** `@WebServlet("/api/process")` · `@MultipartConfig`  
+**Descripción:** Servlet REST que recibe la imagen por HTTP, la procesa con `ScharrService` y responde con JSON.
+
+---
+
+### 🔷 Método: `doPost()` — Línea 55
+
+```java
+protected void doPost(HttpServletRequest req, HttpServletResponse resp)
+        throws ServletException, IOException
+```
+
+**Propósito:** Punto de entrada HTTP. Maneja las 7 etapas del procesamiento:
+
+| Paso | Líneas | Descripción |
+|---|---|---|
+| 1 | 63–68 | Leer el archivo `image` del form-data |
+| 2a | 76–116 | Construir `BufferedImage` desde bytes raw `.rgb` |
+| 2b | 118–126 | Leer imagen estándar (PNG/JPG) con `ImageIO` |
+| 3 | 128–130 | Leer parámetro `mode` (`parallel`/`sequential`) |
+| 4 | 132–138 | Llamar a `ScharrService.processParallel()` o `processSequential()` |
+| 5 | 140–141 | Guardar imagen en `samples/` vía `StorageUtil.save()` |
+| 6 | 143–149 | Codificar imagen en Base64 para el `<img>` del frontend |
+| 7 | 151–165 | Construir y enviar JSON con tiempos y base64 |
+
+**Detección del tipo de archivo (líneas 71–72):**
+```java
+String fileName = filePart.getSubmittedFileName();
+boolean isRaw   = fileName != null && fileName.toLowerCase().endsWith(".rgb");
+```
+
+**Reconstrucción de `.rgb` (líneas 107–115):**
+```java
+for (int y = 0; y < height; y++) {
+    for (int x = 0; x < width; x++) {
+        int idx = (y * width + x) * 3;
+        int r = rawBytes[idx    ] & 0xFF;
+        int g = rawBytes[idx + 1] & 0xFF;
+        int b = rawBytes[idx + 2] & 0xFF;
+        inputImage.setRGB(x, y, (0xFF << 24) | (r << 16) | (g << 8) | b);
+    }
+}
+```
+
+**Codificación Base64 (líneas 146–149):**
+```java
+ByteArrayOutputStream baos = new ByteArrayOutputStream();
+ImageIO.write(result.image, "PNG", baos);
+String imageBase64 = "data:image/png;base64,"
+    + Base64.getEncoder().encodeToString(baos.toByteArray());
+```
+
+---
+
+### 🔷 Método: `nanosToMs()` — Línea 178
+
+```java
+private double nanosToMs(long nanos)
+```
+
+**Propósito:** Convierte nanosegundos a milisegundos con 3 decimales de precisión.
+
+```java
+return Math.round(nanos / 1_000.0) / 1_000.0;
+// Ejemplo: 12_500_432 ns → 12.500 ms
+```
+
+---
+
+### 🔷 Método: `respondError()` — Línea 183
+
+```java
+private void respondError(HttpServletResponse resp, PrintWriter out, String message)
+        throws IOException
+```
+
+**Propósito:** Responde con código HTTP 400 y un JSON `{ "error": "..." }`.
+
+```java
+resp.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+JSONObject err = new JSONObject();
+err.put("error", message);
+```
+
+---
+
+---
+
+## 📁 `CORSFilter.java`
+**Ruta:** `src/main/java/com/algoritmogris/servlet/CORSFilter.java`  
+**Paquete:** `com.algoritmogris.servlet`  
+**Descripción:** Filtro Jakarta que añade cabeceras CORS a todas las respuestas para permitir peticiones desde el frontend React (puerto 5173).
+
+---
+
+### 🔷 Método: `doFilter()` — Línea 16
+
+```java
+public void doFilter(ServletRequest req, ServletResponse res, FilterChain chain)
+        throws IOException, ServletException
+```
+
+**Cabeceras CORS añadidas (líneas 22–26):**
+```java
+response.setHeader("Access-Control-Allow-Origin",  "*");
+response.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+response.setHeader("Access-Control-Allow-Headers", "Content-Type");
+```
+
+**Manejo de preflight OPTIONS (líneas 29–32):**
+```java
+if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
+    response.setStatus(HttpServletResponse.SC_OK);
+    return;  // No se pasa al siguiente filtro
+}
+```
+
+---
+
+---
+
+## 📁 `StorageUtil.java`
+**Ruta:** `src/main/java/com/algoritmogris/util/StorageUtil.java`  
+**Paquete:** `com.algoritmogris.util`  
+**Descripción:** Utilidad estática para guardar imágenes procesadas en disco.
+
+---
+
+### 🔷 Método: `save()` — Línea 33
+
+```java
+public static String save(BufferedImage image, String suffix) throws IOException
+```
+
+**Propósito:** Guarda una imagen como PNG en `samples/` con nombre único por timestamp.
+
+**Resolución de ruta (líneas 35–40):**
+```java
+String samplesPath = System.getProperty("catalina.home") != null
+    // En Tomcat: usa webapps/algoritmogris/samples/
+    ? System.getProperty("catalina.home") + File.separator + "webapps"
+      + File.separator + "algoritmogris" + File.separator + "samples"
+    // En local: usa samples/ en el directorio de trabajo
+    : "samples";
+```
+
+**Nombre de archivo generado (línea 50):**
+```java
+// Formato: scharr_20260401_183245_parallel.png
+String fileName = "scharr_" + LocalDateTime.now().format(FMT) + "_" + suffix + ".png";
+```
+
+**Escritura en disco (línea 54):**
+```java
+ImageIO.write(image, "PNG", output);
+```
+
+---
+
+## 🗺 Mapa de llamadas entre métodos
+
+```
+doPost()                          [EdgeDetectionServlet.java:55]
+  ├── ImageIO.read()              → imagen estándar (línea 120)
+  ├── (bucle raw)                 → imagen .rgb (líneas 107-115)
+  ├── ScharrService
+  │     ├── processParallel()     [ScharrService.java:151]
+  │     │     ├── toGrayPixels()  [ScharrService.java:63]
+  │     │     ├── applyScharr() × 4 hilos  [ScharrService.java:105]
+  │     │     └── buildImage()    [ScharrService.java:249]
+  │     └── processSequential()  [ScharrService.java:224]
+  │           ├── toGrayPixels()
+  │           ├── applyScharr() × 1 hilo
+  │           └── buildImage()
+  ├── StorageUtil.save()          [StorageUtil.java:33]
+  ├── Base64.encode()             (línea 149)
+  └── JSONObject → response       (líneas 152-165)
+```
+
+---
+
+## 📚 Referencias del código
+
+1. H. Scharr, *Optimale Operatoren in der Digitalen Bildverarbeitung*, PhD Heidelberg, 2000. → `KERNEL_X`, `KERNEL_Y`
+2. ITU-R BT.601-7, *Luminance formula* → `toGrayPixels()` línea 79
+3. B. Goetz et al., *Java Concurrency in Practice* → `processParallel()` línea 170
+4. Oracle Java 21 Docs: `ExecutorService.invokeAll()` → línea 201
+5. Jakarta Servlet 6.0 Spec: `@MultipartConfig`, `Part` → líneas 44-64
+
+
+Aquí está la referencia completa de todos los métodos Java. Resumen de lo que cubre:
+
+📋 Métodos documentados (con líneas exactas)
+ScharrService.java — el corazón del algoritmo:
+
+Método	Línea	Qué hace
+ProcessResult (clase)	36	Contenedor: imagen + t1–t4 + total
+KERNEL_X / KERNEL_Y	19–30	Kernels 3×3 de Scharr
+toGrayPixels()	63	ITU-R BT.601 → arreglo de grises
+applyScharr()	105	Convolución Gx/Gy en un rango de filas
+processParallel()	151	4 hilos con ExecutorService
+processSequential()	224	1 hilo, toda la imagen
+buildImage()	249	int[] → BufferedImage en grises
+EdgeDetectionServlet.java:
+
+Método	Línea
+doPost()	55
+nanosToMs()	178
+respondError()	183
+CORSFilter.java → doFilter() línea 16
+StorageUtil.java → save() línea 33
+
+Y al final incluye un mapa de llamadas que 
+muestra cómo se conectan todos los métodos 
+entre sí.
