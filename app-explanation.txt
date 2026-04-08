@@ -1,0 +1,15 @@
+doPost()                          [EdgeDetectionServlet.java:55]
+  ├── ImageIO.read()              → imagen (línea 120)
+  ├── (bucle raw)                 → imagen .rgb (líneas 107-115)
+  ├── ScharrService
+  │     ├── processParallel()     [ScharrService.java:151]
+  │     │     ├── toGrayPixels()  [ScharrService.java:63]
+  │     │     ├── applyScharr() × 4 hilos  [ScharrService.java:105]
+  │     │     └── buildImage()    [ScharrService.java:249]
+  │     └── processSequential()  [ScharrService.java:224]
+  │           ├── toGrayPixels()
+  │           ├── applyScharr() × 1 hilo
+  │           └── buildImage()
+  ├── StorageUtil.save()          [StorageUtil.java:33]
+  ├── Base64.encode()             (línea 149)
+  └── JSONObject → response       (líneas 152-165)

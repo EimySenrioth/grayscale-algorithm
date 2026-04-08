@@ -26,7 +26,7 @@ public class StorageUtil {
      * Si la carpeta no existe, se crea automáticamente.
      *
      * @param image     Imagen resultante del procesamiento Scharr
-     * @param suffix    Sufijo descriptivo para el nombre de archivo (ej: "parallel", "sequential")
+     * @param suffix    Sufijo descriptivo para el nombre de archivo
      * @return          Ruta absoluta del archivo guardado
      * @throws IOException si no se puede escribir el archivo en disco
      */

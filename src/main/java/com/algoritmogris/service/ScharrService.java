@@ -9,8 +9,7 @@ import java.util.concurrent.Executors;
  * ScharrService - Aplica el operador Scharr para detección de bordes.
  *
  * El operador Scharr usa kernels 3×3 con pesos optimizados para mejor
- * simetría rotacional comparado con Sobel. Referencia:
- * H. Scharr, "Optimale Operatoren in der Digitalen Bildverarbeitung", 2000.
+ * simetría rotacional comparado con Sobel.
  */
 public class ScharrService {
 
