@@ -493,6 +493,104 @@ body {
   .times-grid { grid-template-columns: 1fr; }
 }
 
+/* ── Selector de Algoritmo ──────────────────────────────────────────────────── */
+.algo-section { padding: 1.5rem 1.75rem; }
+
+.algo-toggle {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.algo-btn {
+  flex: 1;
+  min-width: 160px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.9rem 1.25rem;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-card-2);
+  color: var(--text-muted);
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: var(--font);
+  transition: all 0.2s;
+}
+
+.algo-btn:hover {
+  border-color: rgba(255,255,255,0.2);
+  color: var(--text);
+  transform: translateY(-2px);
+}
+
+.algo-sub {
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+
+/* Scharr activo — azul */
+.algo-btn--active-scharr {
+  background: rgba(99,179,237,0.12);
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 18px rgba(99,179,237,0.2);
+}
+.algo-btn--active-scharr .algo-sub { color: var(--accent); opacity: 0.7; }
+
+/* Canny activo — naranja */
+.algo-btn--active-canny {
+  background: rgba(246,173,85,0.12);
+  border-color: #f6ad55;
+  color: #f6ad55;
+  box-shadow: 0 0 18px rgba(246,173,85,0.2);
+}
+.algo-btn--active-canny .algo-sub { color: #f6ad55; opacity: 0.7; }
+
+/* Botón Canny en la sección de control */
+.btn-canny {
+  background: linear-gradient(135deg, #f6ad55, #ed8936);
+  color: #1a1a1a;
+  box-shadow: 0 4px 20px rgba(246,173,85,0.3);
+  border: none;
+}
+.btn-canny:not(:disabled):hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 28px rgba(246,173,85,0.45);
+}
+
+/* Badge Canny en resultado */
+.badge-canny {
+  background: linear-gradient(135deg, #f6ad55, #ed8936);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Tabla de tiempos — 3 columnas cuando hay Canny */
+.times-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+/* Bloque Canny con acento naranja */
+.time-block--canny {
+  border-color: rgba(246,173,85,0.2);
+  background: rgba(246,173,85,0.04);
+}
+
+.time-block--canny .time-block-title { color: #f6ad55; }
+
+.time-val--canny { color: #f6ad55 !important; }
+
+
 /* ── Panel de Depuración ────────────────────────────────────────────────────── */
 .debug-section { padding: 1.25rem 1.75rem; }
 

@@ -1,5 +1,6 @@
 package com.algoritmogris.servlet;
 
+import com.algoritmogris.canny.EdgeDetectorCanny;
 import com.algoritmogris.service.ScharrService;
 import com.algoritmogris.service.ScharrService.ProcessResult;
 import com.algoritmogris.util.StorageUtil;
@@ -17,29 +18,30 @@ import java.io.PrintWriter;
 import java.util.Base64;
 
 /**
- * EdgeDetectionServlet - Endpoint REST para procesar imágenes con Scharr.
+ * EdgeDetectionServlet - Endpoint REST para procesar imágenes.
+ *
+ * Soporta dos algoritmos:
+ *   - Scharr (paralelo 4 hilos o secuencial)
+ *   - Canny  (un solo hilo, tiempo total)
  *
  * Soporta dos tipos de imagen:
  *   1. Archivos .rgb (raw binario sin cabecera): requiere parámetros width y height.
  *   2. Imágenes estándar (PNG, JPG, BMP, etc.): no requiere dimensiones.
  *
- * Ruta: POST /api/process?mode=parallel|sequential
+ * Ruta: POST /api/process
  *
  * Parámetros form-data:
- *   - image  : archivo de imagen (.rgb u otro formato)
- *   - mode   : "parallel" (2 hilos) o "sequential" (1 hilo)
- *   - width  : ancho en píxeles (solo para .rgb)
- *   - height : alto en píxeles  (solo para .rgb)
+ *   - image     : archivo de imagen (.rgb u otro formato)
+ *   - algorithm : "scharr" (default) o "canny"
+ *   - mode      : "parallel" o "sequential" (solo aplica a Scharr)
+ *   - width     : ancho en píxeles (solo para .rgb)
+ *   - height    : alto en píxeles  (solo para .rgb)
  *
- * Respuesta JSON:
- * {
- *   "imagePath": "C:\\...\\samples\\scharr_..._parallel.png",
- *   "t1Ms": 12.5,
- *   "t2Ms": 13.1,
- *   "totalMs": 14.0,
- *   "width": 640,
- *   "height": 480
- * }
+ * Respuesta JSON Scharr:
+ *   { imagePath, imageBase64, algorithm, mode, t1Ms, t2Ms, t3Ms, t4Ms, totalMs, width, height }
+ *
+ * Respuesta JSON Canny:
+ *   { imagePath, imageBase64, algorithm, totalMs, width, height }
  */
 @WebServlet("/api/process")
 @MultipartConfig(
@@ -125,41 +127,69 @@ public class EdgeDetectionServlet extends HttpServlet {
                 }
             }
 
-            // ─── 3. Leer modo de procesamiento ───────────────────────────────
+            // ─── 3. Leer algoritmo y modo ─────────────────────────────────
+            String algorithm = req.getParameter("algorithm");
+            if (algorithm == null || algorithm.isEmpty()) algorithm = "scharr";
+
             String mode = req.getParameter("mode");
             if (mode == null || mode.isEmpty()) mode = "parallel";
 
-            // ─── 4. Procesar con algoritmo Scharr ────────────────────────────
-            ProcessResult result;
-            if ("sequential".equalsIgnoreCase(mode)) {
-                result = scharrService.processSequential(inputImage);
-            } else {
-                result = scharrService.processParallel(inputImage);
-            }
-
-            // ─── 5. Guardar resultado en samples/ ────────────────────────────
-            String savedPath = StorageUtil.save(result.image, mode);
-
-            // ─── 6. Codificar imagen en Base64 para enviar al frontend ────────
-            // Esto permite mostrar la imagen directamente en el <img> sin
-            // necesitar un endpoint de descarga separado.
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            ImageIO.write(result.image, "PNG", baos);
-            String imageBase64 = "data:image/png;base64,"
-                + Base64.getEncoder().encodeToString(baos.toByteArray());
-
-            // ─── 7. Responder con JSON de resultados ─────────────────────────
             JSONObject json = new JSONObject();
-            json.put("imagePath",   savedPath);
-            json.put("imageBase64", imageBase64);
-            json.put("t1Ms",        nanosToMs(result.t1Nanos));
-            json.put("t2Ms",        nanosToMs(result.t2Nanos));
-            json.put("t3Ms",        nanosToMs(result.t3Nanos));
-            json.put("t4Ms",        nanosToMs(result.t4Nanos));
-            json.put("totalMs",     nanosToMs(result.totalNanos));
-            json.put("mode",        mode);
-            json.put("width",       result.image.getWidth());
-            json.put("height",      result.image.getHeight());
+
+            if ("canny".equalsIgnoreCase(algorithm)) {
+                // ─── 4a. Procesar con Canny (1 hilo, tiempo total) ───────────
+                long cannyStart = System.nanoTime();
+                BufferedImage cannyResult = EdgeDetectorCanny.detectEdges(inputImage);
+                long cannyTotal = System.nanoTime() - cannyStart;
+
+                // ─── 5a. Guardar resultado en samples/ ───────────────────────
+                String savedPath = StorageUtil.save(cannyResult, "canny");
+
+                // ─── 6a. Codificar en Base64 ─────────────────────────────────
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                ImageIO.write(cannyResult, "PNG", baos);
+                String imageBase64 = "data:image/png;base64,"
+                    + Base64.getEncoder().encodeToString(baos.toByteArray());
+
+                // ─── 7a. JSON Canny: solo totalMs (sin T1-T4) ────────────────
+                json.put("algorithm",   "canny");
+                json.put("imagePath",   savedPath);
+                json.put("imageBase64", imageBase64);
+                json.put("totalMs",     nanosToMs(cannyTotal));
+                json.put("width",       cannyResult.getWidth());
+                json.put("height",      cannyResult.getHeight());
+
+            } else {
+                // ─── 4b. Procesar con Scharr (paralelo 4 hilos o secuencial) ─
+                ProcessResult result;
+                if ("sequential".equalsIgnoreCase(mode)) {
+                    result = scharrService.processSequential(inputImage);
+                } else {
+                    result = scharrService.processParallel(inputImage);
+                }
+
+                // ─── 5b. Guardar resultado en samples/ ───────────────────────
+                String savedPath = StorageUtil.save(result.image, mode);
+
+                // ─── 6b. Codificar en Base64 ─────────────────────────────────
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                ImageIO.write(result.image, "PNG", baos);
+                String imageBase64 = "data:image/png;base64,"
+                    + Base64.getEncoder().encodeToString(baos.toByteArray());
+
+                // ─── 7b. JSON Scharr: T1-T4 + totalMs ───────────────────────
+                json.put("algorithm",   "scharr");
+                json.put("imagePath",   savedPath);
+                json.put("imageBase64", imageBase64);
+                json.put("t1Ms",        nanosToMs(result.t1Nanos));
+                json.put("t2Ms",        nanosToMs(result.t2Nanos));
+                json.put("t3Ms",        nanosToMs(result.t3Nanos));
+                json.put("t4Ms",        nanosToMs(result.t4Nanos));
+                json.put("totalMs",     nanosToMs(result.totalNanos));
+                json.put("mode",        mode);
+                json.put("width",       result.image.getWidth());
+                json.put("height",      result.image.getHeight());
+            }
 
             out.print(json.toString());
             out.flush();

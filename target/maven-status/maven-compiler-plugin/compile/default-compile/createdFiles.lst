@@ -1,5 +1,6 @@
 com\algoritmogris\service\ScharrService.class
 com\algoritmogris\servlet\CORSFilter.class
 com\algoritmogris\service\ScharrService$ProcessResult.class
+com\algoritmogris\canny\EdgeDetectorCanny.class
 com\algoritmogris\servlet\EdgeDetectionServlet.class
 com\algoritmogris\util\StorageUtil.class

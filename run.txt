@@ -1,0 +1,2 @@
+cd C:\Users\itano\Desktop\code\algoritmogris\frontend
+npm run dev
