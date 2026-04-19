@@ -1,5 +1,8 @@
 C:\Users\itano\Desktop\code\algoritmogris\src\main\java\com\algoritmogris\canny\EdgeDetectorCanny.java
+C:\Users\itano\Desktop\code\algoritmogris\src\main\java\com\algoritmogris\laplaciano\EdgeDetectorLaplaciano.java
+C:\Users\itano\Desktop\code\algoritmogris\src\main\java\com\algoritmogris\prewitt\EdgeDetectorPrewitt.java
 C:\Users\itano\Desktop\code\algoritmogris\src\main\java\com\algoritmogris\service\ScharrService.java
 C:\Users\itano\Desktop\code\algoritmogris\src\main\java\com\algoritmogris\servlet\CORSFilter.java
 C:\Users\itano\Desktop\code\algoritmogris\src\main\java\com\algoritmogris\servlet\EdgeDetectionServlet.java
+C:\Users\itano\Desktop\code\algoritmogris\src\main\java\com\algoritmogris\sobel\EdgeDetectorSobel.java
 C:\Users\itano\Desktop\code\algoritmogris\src\main\java\com\algoritmogris\util\StorageUtil.java

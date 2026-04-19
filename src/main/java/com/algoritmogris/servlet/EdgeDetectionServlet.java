@@ -1,6 +1,9 @@
 package com.algoritmogris.servlet;
 
 import com.algoritmogris.canny.EdgeDetectorCanny;
+import com.algoritmogris.sobel.EdgeDetectorSobel;
+import com.algoritmogris.laplaciano.EdgeDetectorLaplaciano;
+import com.algoritmogris.prewitt.EdgeDetectorPrewitt;
 import com.algoritmogris.service.ScharrService;
 import com.algoritmogris.service.ScharrService.ProcessResult;
 import com.algoritmogris.util.StorageUtil;
@@ -20,28 +23,29 @@ import java.util.Base64;
 /**
  * EdgeDetectionServlet - Endpoint REST para procesar imágenes.
  *
- * Soporta dos algoritmos:
- *   - Scharr (paralelo 4 hilos o secuencial)
- *   - Canny  (un solo hilo, tiempo total)
+ * Algoritmos soportados:
+ *   - scharr     : paralelo 4 hilos o secuencial
+ *   - canny      : Gaussiano + Sobel + umbral doble (1 hilo)
+ *   - sobel      : operador Sobel (1 hilo)
+ *   - laplaciano : operador Laplaciano 8-vecinos (1 hilo)
+ *   - prewitt    : operador Prewitt (1 hilo)
  *
  * Soporta dos tipos de imagen:
  *   1. Archivos .rgb (raw binario sin cabecera): requiere parámetros width y height.
  *   2. Imágenes estándar (PNG, JPG, BMP, etc.): no requiere dimensiones.
  *
- * Ruta: POST /api/process
- *
  * Parámetros form-data:
- *   - image     : archivo de imagen (.rgb u otro formato)
- *   - algorithm : "scharr" (default) o "canny"
- *   - mode      : "parallel" o "sequential" (solo aplica a Scharr)
+ *   - image     : archivo de imagen
+ *   - algorithm : "scharr" (default) | "canny" | "sobel" | "laplaciano" | "prewitt"
+ *   - mode      : "parallel" | "sequential"  (solo para Scharr)
  *   - width     : ancho en píxeles (solo para .rgb)
  *   - height    : alto en píxeles  (solo para .rgb)
  *
  * Respuesta JSON Scharr:
- *   { imagePath, imageBase64, algorithm, mode, t1Ms, t2Ms, t3Ms, t4Ms, totalMs, width, height }
+ *   { algorithm, mode, t1Ms, t2Ms, t3Ms, t4Ms, totalMs, imageBase64, imagePath, width, height }
  *
- * Respuesta JSON Canny:
- *   { imagePath, imageBase64, algorithm, totalMs, width, height }
+ * Respuesta JSON resto:
+ *   { algorithm, totalMs, imageBase64, imagePath, width, height }
  */
 @WebServlet("/api/process")
 @MultipartConfig(
@@ -137,30 +141,35 @@ public class EdgeDetectionServlet extends HttpServlet {
             JSONObject json = new JSONObject();
 
             if ("canny".equalsIgnoreCase(algorithm)) {
-                // ─── 4a. Procesar con Canny (1 hilo, tiempo total) ───────────
+                // ─── 4a. Canny ─────────────────────────────────────────────
                 long cannyStart = System.nanoTime();
                 BufferedImage cannyResult = EdgeDetectorCanny.detectEdges(inputImage);
                 long cannyTotal = System.nanoTime() - cannyStart;
+                buildSimpleResponse(json, cannyResult, "canny", cannyTotal);
 
-                // ─── 5a. Guardar resultado en samples/ ───────────────────────
-                String savedPath = StorageUtil.save(cannyResult, "canny");
+            } else if ("sobel".equalsIgnoreCase(algorithm)) {
+                // ─── 4b. Sobel ─────────────────────────────────────────────
+                long start = System.nanoTime();
+                BufferedImage sobelResult = EdgeDetectorSobel.detectEdges(inputImage);
+                long total = System.nanoTime() - start;
+                buildSimpleResponse(json, sobelResult, "sobel", total);
 
-                // ─── 6a. Codificar en Base64 ─────────────────────────────────
-                ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                ImageIO.write(cannyResult, "PNG", baos);
-                String imageBase64 = "data:image/png;base64,"
-                    + Base64.getEncoder().encodeToString(baos.toByteArray());
+            } else if ("laplaciano".equalsIgnoreCase(algorithm)) {
+                // ─── 4c. Laplaciano ─────────────────────────────────────────
+                long start = System.nanoTime();
+                BufferedImage lapResult = EdgeDetectorLaplaciano.detectEdges(inputImage);
+                long total = System.nanoTime() - start;
+                buildSimpleResponse(json, lapResult, "laplaciano", total);
 
-                // ─── 7a. JSON Canny: solo totalMs (sin T1-T4) ────────────────
-                json.put("algorithm",   "canny");
-                json.put("imagePath",   savedPath);
-                json.put("imageBase64", imageBase64);
-                json.put("totalMs",     nanosToMs(cannyTotal));
-                json.put("width",       cannyResult.getWidth());
-                json.put("height",      cannyResult.getHeight());
+            } else if ("prewitt".equalsIgnoreCase(algorithm)) {
+                // ─── 4d. Prewitt ───────────────────────────────────────────
+                long start = System.nanoTime();
+                BufferedImage prewittResult = EdgeDetectorPrewitt.detectEdges(inputImage);
+                long total = System.nanoTime() - start;
+                buildSimpleResponse(json, prewittResult, "prewitt", total);
 
             } else {
-                // ─── 4b. Procesar con Scharr (paralelo 4 hilos o secuencial) ─
+                // ─── 4e. Scharr (paralelo 4 hilos o secuencial) ─────────────────
                 ProcessResult result;
                 if ("sequential".equalsIgnoreCase(mode)) {
                     result = scharrService.processSequential(inputImage);
@@ -168,16 +177,13 @@ public class EdgeDetectionServlet extends HttpServlet {
                     result = scharrService.processParallel(inputImage);
                 }
 
-                // ─── 5b. Guardar resultado en samples/ ───────────────────────
                 String savedPath = StorageUtil.save(result.image, mode);
 
-                // ─── 6b. Codificar en Base64 ─────────────────────────────────
                 ByteArrayOutputStream baos = new ByteArrayOutputStream();
                 ImageIO.write(result.image, "PNG", baos);
                 String imageBase64 = "data:image/png;base64,"
                     + Base64.getEncoder().encodeToString(baos.toByteArray());
 
-                // ─── 7b. JSON Scharr: T1-T4 + totalMs ───────────────────────
                 json.put("algorithm",   "scharr");
                 json.put("imagePath",   savedPath);
                 json.put("imageBase64", imageBase64);
@@ -202,7 +208,27 @@ public class EdgeDetectionServlet extends HttpServlet {
         }
     }
 
-    // ─── Helpers ─────────────────────────────────────────────────────────────
+    // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+    /**
+     * Construye la respuesta JSON estándar para algoritmos de 1 hilo
+     * (Canny, Sobel, Laplaciano, Prewitt): guarda, codifica y rellena el JSON.
+     */
+    private void buildSimpleResponse(JSONObject json, BufferedImage output,
+                                     String algorithmName, long totalNanos)
+            throws Exception {
+        String savedPath = StorageUtil.save(output, algorithmName);
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        ImageIO.write(output, "PNG", baos);
+        String imageBase64 = "data:image/png;base64,"
+            + Base64.getEncoder().encodeToString(baos.toByteArray());
+        json.put("algorithm",   algorithmName);
+        json.put("imagePath",   savedPath);
+        json.put("imageBase64", imageBase64);
+        json.put("totalMs",     nanosToMs(totalNanos));
+        json.put("width",       output.getWidth());
+        json.put("height",      output.getHeight());
+    }
 
     /** Convierte nanosegundos a milisegundos con 3 decimales. */
     private double nanosToMs(long nanos) {
