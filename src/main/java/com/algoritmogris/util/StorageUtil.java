@@ -8,52 +8,53 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
 /**
- * StorageUtil - Utilidad para guardar las imágenes procesadas en el disco.
- *
- * Las imágenes resultantes se guardan en la carpeta `samples/` del proyecto
- * con un nombre único basado en la fecha y hora actual para evitar colisiones.
+ * StorageUtil - Minitool utilitario encargado interactuar con el FileSystem general 
+ * Funcionalidad orientada exclusivamente a serializar binarios sobre la memoria rígida (Discouro)
  */
 public class StorageUtil {
 
-    // Formateador para generar nombres de archivo únicos tipo: 20240401_120530
+    // Variable global inmutable estática (Thread-Safe para Date Formatting Time)
+    // Instanciado sobre un patrón claro (AñoMesDia_HoraMinuto)  e.g 20261130_091522. Útil por prevenciones colisionales.
     private static final DateTimeFormatter FMT =
         DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss");
 
     /**
-     * Guarda un BufferedImage como archivo PNG en la carpeta samples/.
+     * Graba el buffer flotante de nuestra RAM al disco en formato PNG codificado local.
+     * Busca la ruta de despliegue para determinar si estamos en testeo o productivo Tomcat.
      *
-     * La ruta de samples/ se resuelve relativa al directorio raíz del proyecto.
-     * Si la carpeta no existe, se crea automáticamente.
-     *
-     * @param image     Imagen resultante del procesamiento Scharr
-     * @param suffix    Sufijo descriptivo para el nombre de archivo
-     * @return          Ruta absoluta del archivo guardado
-     * @throws IOException si no se puede escribir el archivo en disco
+     * @param image     Matriz Buffer de píxeles resultante 
+     * @param suffix    Sufijo o modalidad de marca "Sobel", "Canny", "Mosaico" para inyectar su nombre 
+     * @return          String referencial de puntero indicando la ruta Windows/Unix absoluta y final grabada 
+     * @throws IOException Obligatoriedad sintáctica frente excepciones IO (Imposibilidad disco o escritura prohibida)
      */
     public static String save(BufferedImage image, String suffix) throws IOException {
-        // Construir la ruta de la carpeta samples/ junto al proyecto
+        
+        // El conector revisa si corremos incrustados sobre variables globales como Tomcat (.catalina property)
         String samplesPath = System.getProperty("catalina.home") != null
-            // En servidor Tomcat: usar la carpeta samples/ dentro del webapps
+            // Flujo Positivo Apache Tomcat : Construye el path base al directorio AppWeb \algoritmogris\samples\ 
             ? System.getProperty("catalina.home") + File.separator + "webapps"
               + File.separator + "algoritmogris" + File.separator + "samples"
-            // En ejecución local directa: carpeta samples/ en el directorio raíz
+            // Flujo Negativo Directo Testing Local : Guardará al mismo escalón relativo `./samples` ejecutado en CMD o IDE
             : "samples";
 
+        // Preparamos objeto explorador de nodo apuntado
         File samplesDir = new File(samplesPath);
 
-        // Crear la carpeta samples/ si no existe
+        // Si la carpeta estricta "Samples" no existiese, procedemos a forzar su anexo 
         if (!samplesDir.exists()) {
-            samplesDir.mkdirs();
+            samplesDir.mkdirs(); // Permite concatenar carpetas anidadas de forma segura
         }
 
-        // Generar nombre único usando la fecha y hora actual + sufijo del modo de proceso
+        // Armamos el String base uniendo nombre universal "Scharr", timestamp y etiqueta con "png" estático
         String fileName = "scharr_" + LocalDateTime.now().format(FMT) + "_" + suffix + ".png";
+        
+        // Declaramos Objeto Salida asociando Ruta + Nombre
         File output = new File(samplesDir, fileName);
 
-        // Escribir la imagen en disco en formato PNG (sin pérdida de calidad)
+        // Activamos función codificadora ImageIO sobre nuestro array pasándole meta-etiqueta tipo PNG, inyectable a la instancia File targetizada.
         ImageIO.write(image, "PNG", output);
 
-        // Retornar la ruta completa para que el servlet la incluya en la respuesta JSON
+        // Devuelve ruta física para base de datos o FrontEnd (útil como Link tag <a href= / descarga>) 
         return output.getAbsolutePath();
     }
 }

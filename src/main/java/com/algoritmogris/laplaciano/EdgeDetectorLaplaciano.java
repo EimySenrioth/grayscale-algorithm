@@ -2,79 +2,86 @@ package com.algoritmogris.laplaciano;
 
 import java.awt.image.BufferedImage;
 
-// Clase encargada de realizar la detección de bordes de manera secuencial
-// utilizando el operador Laplaciano
+/**
+ * Clase encargada de realizar la detección de bordes mediante la segunda derivada espacial.
+ * Se implementa secuencialmente utilizando el Operador o Laplaciano con vecindad-8.
+ * Resalta regiones de cambio rápido de intensidad, pero es muy sensible al ruido visual.
+ */
 public class EdgeDetectorLaplaciano {
 
-    // Método estático que recibe una imagen y retorna la imagen con bordes detectados
+    /**
+     * Aplica el kernel analítico filtro Laplaciano sobre toda la imagen enviada.
+     * Genera la detección topográfica completa sin sesgo direccional unidimensional.
+     *
+     * @param image Imagen fuente color a escanear (BufferedImage).
+     * @return Una de monocromo con un marcado de bordes no direccional estricto.
+     */
     public static BufferedImage detectEdges(BufferedImage image) {
 
-        // Obtener ancho de la imagen
+        // Extraer y almacenar los linderos de máximo escaneo
         int width = image.getWidth();
-
-        // Obtener alto de la imagen
         int height = image.getHeight();
 
-        // Crear imagen resultado en escala de grises
+        // Instanciar matriz virtual con TYPE_BYTE_GRAY reservando memoria solo iluminada
         BufferedImage result =
                 new BufferedImage(width, height, BufferedImage.TYPE_BYTE_GRAY);
 
-        // Máscara Laplaciana de 8 vecinos (detecta bordes en todas direcciones)
+        // Máscara Laplaciana de conectividad 8 (Vecindad Total)
+        // Resta un entorno exterior (-1 perimetral) vs un centro altamente contrastado (+8)
+        // Cuando las celdas alrededor son homogéneas al centro, la suma se anula a cero.
         int[][] laplacian = {
                 {-1, -1, -1},
                 {-1,  8, -1},
                 {-1, -1, -1}
         };
 
-        // Recorrer filas de la imagen (evitando bordes)
+        // ─── BARRIDO LINEAL ───
+        
+        // Desplazarse secuencialmente limitando el margen seguro para prevenir desbordes de array IOB()
         for (int y = 1; y < height - 1; y++) {
-
-            // Recorrer columnas de la imagen
             for (int x = 1; x < width - 1; x++) {
 
-                // Variable para almacenar el valor del filtro Laplaciano
+                // Acumulador variable que recolectará fuerza de convolución general Laplaciana
                 int sum = 0;
 
-                // Recorrer ventana 3x3 alrededor del pixel actual
+                // Ciclos anidados 3x3 centrados originados en coordenada [x,y] 
                 for (int i = -1; i <= 1; i++) {
-
                     for (int j = -1; j <= 1; j++) {
 
-                        // Obtener pixel vecino
+                        // Analizar el pixel perimetral adjunto a vecindad 
                         int pixel = image.getRGB(x + j, y + i);
 
-                        // Extraer componente rojo
-                        int r = (pixel >> 16) & 0xff;
+                        // Filtrado bit a bit para desglosar el entero cromático gigante en luz RGB 
+                        int r = (pixel >> 16) & 0xff; // Banda Roja
+                        int g = (pixel >> 8) & 0xff;  // Banda Verde
+                        int b = pixel & 0xff;         // Banda Azul final
 
-                        // Extraer componente verde
-                        int g = (pixel >> 8) & 0xff;
-
-                        // Extraer componente azul
-                        int b = pixel & 0xff;
-
-                        // Convertir pixel a escala de grises
+                        // Uniformidad aritmética lumínica
                         int gray = (r + g + b) / 3;
 
-                        // Aplicar máscara Laplaciana
+                        // Procedimiento núcleo: Multiplicamos el gris aislado por nuestro coeficiente 
+                        // Laplaciano predeterminado en esa posición y lo guardamos sumando.
                         sum += gray * laplacian[i + 1][j + 1];
                     }
                 }
 
-                // Tomar valor absoluto para resaltar bordes
+                // Obturador y corrector limitante matemático.
+                // Usamos Math.abs() debido a que el laplaciano produce tanto caídas negativas 
+                // abruptas como picos positivos, y limitamos con un techo (min) de 255 (Blanco Puro).
                 int magnitude = Math.min(255, Math.abs(sum));
 
-                // Crear pixel en escala de grises
+                // Desplazamiento a empaquetado de byte color formato Java Nativo
                 int edge =
-                        (magnitude << 16) |  // Canal rojo
-                        (magnitude << 8)  |  // Canal verde
-                        magnitude;           // Canal azul
+                        (magnitude << 16) |  // Slot canal rojo
+                        (magnitude << 8)  |  // Slot canal verde
+                        magnitude;           // Slot canal azul
 
-                // Asignar pixel resultado en la imagen
+                // Punteado local resultante pintado a matriz
                 result.setRGB(x, y, edge);
             }
         }
 
-        // Retornar imagen procesada
+        // Devolución buffer ensamblado
         return result;
     }
 }

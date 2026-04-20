@@ -35,6 +35,7 @@ export default function App() {
   const [history, setHistory]     = useState({
     parallel: null, sequential: null,
     canny: null, sobel: null, laplaciano: null, prewitt: null,
+    todos_seq: null, todos_par: null,
   })
   const [gallery, setGallery]     = useState({
     scharr: [], canny: [], sobel: [], laplaciano: [], prewitt: [],
@@ -94,26 +95,27 @@ export default function App() {
     reader.readAsArrayBuffer(file)
   }
 
-  const process = async (mode) => {
+  const process = async (mode, overrideAlgorithm = null) => {
     if (!file) { setError('Selecciona una imagen primero.'); return }
     if (isRaw && (!width || !height)) { setError('Ingresa ancho y alto para .rgb.'); return }
 
-    const loadingKey = algorithm === 'scharr' ? mode : algorithm
+    const algoToUse = overrideAlgorithm || algorithm
+    const loadingKey = (algoToUse === 'scharr' || algoToUse === 'todos') ? `${algoToUse}_${mode}` : algoToUse
     setLoading(loadingKey); setError(null); setShowLogs(true)
-    log('info', `Algoritmo: ${algorithm.toUpperCase()} · Modo: ${mode.toUpperCase()}`)
+    log('info', `Algoritmo: ${algoToUse.toUpperCase()} · Modo: ${mode ? mode.toUpperCase() : 'SINGLE'}`)
 
     const form = new FormData()
     form.append('image', file)
-    form.append('algorithm', algorithm)
+    form.append('algorithm', algoToUse)
     if (isRaw) { form.append('width', width); form.append('height', height) }
-    if (algorithm === 'scharr') form.append('mode', mode)
+    if (algoToUse === 'scharr' || algoToUse === 'todos') form.append('mode', mode)
 
     let lastError = null
 
     for (const url of API_CANDIDATES) {
-      const fullUrl = algorithm === 'scharr'
-        ? `${url}?algorithm=scharr&mode=${mode}`
-        : `${url}?algorithm=${algorithm}`
+      const fullUrl = (algoToUse === 'scharr' || algoToUse === 'todos')
+        ? `${url}?algorithm=${algoToUse}&mode=${mode}`
+        : `${url}?algorithm=${algoToUse}`
       log('info', `POST ${fullUrl}`)
 
       try {
@@ -133,12 +135,16 @@ export default function App() {
         setResult(entry)
 
         // Actualizar historial
-        if (algorithm === 'scharr') {
+        if (algoToUse === 'scharr') {
           setHistory(prev => ({ ...prev, [mode]: entry }))
           log('ok', `✅ Scharr T1=${json.t1Ms}ms T2=${json.t2Ms}ms T3=${json.t3Ms}ms T4=${json.t4Ms}ms Total=${json.totalMs}ms`)
+        } else if (algoToUse === 'todos') {
+          const histKey = mode === 'sequential' ? 'todos_seq' : 'todos_par'
+          setHistory(prev => ({ ...prev, [histKey]: entry }))
+          log('ok', `✅ Todos (${mode}) Total=${json.totalMs}ms`)
         } else {
-          setHistory(prev => ({ ...prev, [algorithm]: entry }))
-          log('ok', `✅ ${algorithm.toUpperCase()} Total=${json.totalMs}ms`)
+          setHistory(prev => ({ ...prev, [algoToUse]: entry }))
+          log('ok', `✅ ${algoToUse.toUpperCase()} Total=${json.totalMs}ms`)
         }
 
         // Agregar a galería
@@ -171,253 +177,252 @@ export default function App() {
   const totalGalleryImages = Object.values(gallery).reduce((s, arr) => s + arr.length, 0)
 
   return (
-    <div className="app">
-      {/* Header */}
-      <header className="header">
-        <span className={`logo-badge logo-badge--${algorithm}`}>
-          {ALGORITHMS[algorithm].icon} {ALGORITHMS[algorithm].label}
-        </span>
-        <h1>Detección de Bordes</h1>
-        <p className="subtitle">Scharr · Canny · Sobel · Laplaciano · Prewitt · RGB Raw</p>
-      </header>
+    <div className="layout-dashboard">
+      
+      {/* ── SIDEBAR ── */}
+      <aside className="sidebar">
+        
+        <div className="sidebar-header">
+           <span className={`logo-badge logo-badge--${algorithm}`}>
+             Edge Detection
+           </span>
+           <h2>Algoritmo Gris</h2>
+        </div>
 
-      <main className="main">
+        <div className="sidebar-scroll">
 
-        {/* Drop Zone */}
-        <section className="card drop-section">
-          <div
-            id="drop-zone"
-            className={`drop-zone ${dragging ? 'dragging' : ''} ${preview ? 'has-image' : ''}`}
-            onDrop={onDrop} onDragOver={onDragOver} onDragLeave={onDragLeave}
-            onClick={() => document.getElementById('file-input').click()}
-          >
-            {preview
-              ? <img src={preview} alt="Vista previa" className="preview-img" />
-              : <div className="drop-placeholder">
-                  <div className="drop-icon">🖼️</div>
-                  <p className="drop-text">Arrastra tu imagen aquí</p>
-                  <p className="drop-hint">Cualquier tamaño m × n · <strong>.rgb</strong> raw · PNG · JPG</p>
-                </div>
-            }
-          </div>
-          <input id="file-input" type="file" accept=".rgb,image/*" style={{ display:'none' }} onChange={onFileInput} />
-          {file && (
-            <p className="file-name">
-              📁 {file.name} — {(file.size/1024).toFixed(1)} KB
-              {isRaw && <span className="rgb-badge">RAW RGB</span>}
-            </p>
-          )}
-        </section>
-
-        {/* Dimensiones .rgb */}
-        {isRaw && (
-          <section className="card dims-section">
-            <h2 className="section-title">📐 Dimensiones RAW</h2>
-            <p className="dims-hint">Los archivos <code>.rgb</code> no tienen cabecera. Ingresa el ancho y alto en píxeles.</p>
-            <div className="dims-row">
-              <div className="dim-field">
-                <label htmlFor="input-width">Ancho (px)</label>
-                <input id="input-width" type="number" min="1" placeholder="ej: 640"
-                  value={width} onChange={e => setWidth(e.target.value)} onBlur={buildRgbPreview} />
-              </div>
-              <span className="dim-sep">×</span>
-              <div className="dim-field">
-                <label htmlFor="input-height">Alto (px)</label>
-                <input id="input-height" type="number" min="1" placeholder="ej: 480"
-                  value={height} onChange={e => setHeight(e.target.value)} onBlur={buildRgbPreview} />
-              </div>
-              <button className="btn btn-secondary dim-preview-btn" onClick={buildRgbPreview}>👁 Previsualizar</button>
-            </div>
-          </section>
-        )}
-
-        {/* Selector de Algoritmo */}
-        <section className="card algo-section">
-          <h2 className="section-title">Algoritmo</h2>
-          <div className="algo-toggle">
-            {Object.entries(ALGORITHMS).map(([key, cfg]) => (
-              <button
-                key={key}
-                id={`btn-algo-${key}`}
-                className={`algo-btn ${algorithm === key ? `algo-btn--active-${key}` : ''}`}
-                onClick={() => { setAlgorithm(key); setResult(null); setError(null) }}
-              >
-                {cfg.icon} {cfg.label}
-                <span className="algo-sub">{cfg.sub}</span>
-              </button>
-            ))}
-          </div>
-        </section>
-
-        {/* Botones de Procesamiento */}
-        <section className="card controls-section">
-          <h2 className="section-title">Modo de Procesamiento</h2>
-          {algorithm === 'scharr' ? (
-            <div className="buttons-row">
-              <button id="btn-parallel" className="btn btn-primary"
-                onClick={() => process('parallel')} disabled={!!loading}>
-                {loading === 'parallel' ? <span className="spinner" /> : '⚡'} Scharr — Paralelo (4 hilos)
-              </button>
-              <button id="btn-sequential" className="btn btn-secondary"
-                onClick={() => process('sequential')} disabled={!!loading}>
-                {loading === 'sequential' ? <span className="spinner" /> : '▶'} Scharr — Secuencial
-              </button>
-            </div>
-          ) : (
-            <div className="buttons-row">
-              <button id={`btn-${algorithm}`} className={`btn btn-algo btn-algo--${algorithm}`}
-                onClick={() => process('sequential')} disabled={!!loading}>
-                {loading === algorithm ? <span className="spinner" /> : ALGORITHMS[algorithm].icon}
-                Ejecutar {ALGORITHMS[algorithm].label}
-              </button>
-            </div>
-          )}
-          {loading && <p className="loading-text">Procesando con {ALGORITHMS[algorithm]?.label || algorithm}…</p>}
-          {error   && <p className="error-text">⚠ {error}</p>}
-        </section>
-
-        {/* ── Cuadrícula comparativa 3×n ─────────────────────────────────── */}
-        {Object.values(history).some(v => v !== null) && (
-          <section className="card cmp-section">
-            <h2 className="section-title">📊 Comparación de resultados</h2>
-
-            <div className="cmp-grid">
-
-              {/* Celda: imagen original */}
-              <div className="cmp-card cmp-card--original">
-                <div className="cmp-card-header">
-                  <span className="cmp-algo-badge cmp-algo-badge--original">🖼️ Original</span>
-                </div>
-                <div className="cmp-img-wrap">
-                  {preview
-                    ? <img src={preview} alt="Original" className="cmp-photo" />
-                    : <div className="cmp-photo cmp-photo--empty">Sin vista previa</div>
-                  }
-                </div>
-                <div className="cmp-card-footer">
-                  <span className="cmp-footer-label">Imagen de entrada</span>
-                </div>
-              </div>
-
-              {/* Scharr Paralelo */}
-              {history.parallel && (
-                <div className="cmp-card cmp-card--scharr">
-                  <div className="cmp-card-header">
-                    <span className="cmp-algo-badge cmp-algo-badge--scharr">⚡ Scharr Paralelo</span>
+          {/* Subir Archivo */}
+          <section className="sb-card">
+            <h3 className="sb-subtitle">Fuente de Entrada</h3>
+            <div
+              id="drop-zone"
+              className={`drop-zone ${dragging ? 'dragging' : ''} ${preview ? 'has-image' : ''}`}
+              onDrop={onDrop} onDragOver={onDragOver} onDragLeave={onDragLeave}
+              onClick={() => document.getElementById('file-input').click()}
+            >
+              {preview
+                ? <img src={preview} alt="Vista previa" className="preview-img" />
+                : <div className="drop-placeholder">
+                    <p className="drop-hint">Arrastra o haz clic</p>
                   </div>
-                  <div className="cmp-img-wrap">
-                    {history.parallel.imageBase64
-                      ? <img src={history.parallel.imageBase64} alt="Scharr P" className="cmp-photo" />
-                      : <div className="cmp-photo cmp-photo--empty">—</div>}
-                  </div>
-                  <div className="cmp-card-footer">
-                    <div className="cmp-times">
-                      <span className="cmp-time cmp-time--scharr">{fmtMs(history.parallel.totalMs)}</span>
-                      <span className="cmp-time-label">total</span>
-                    </div>
-                    <div className="cmp-threads">
-                      <span className="cmp-thread">T1 {fmtMs(history.parallel.t1Ms)}</span>
-                      <span className="cmp-thread">T2 {fmtMs(history.parallel.t2Ms)}</span>
-                      <span className="cmp-thread">T3 {fmtMs(history.parallel.t3Ms)}</span>
-                      <span className="cmp-thread">T4 {fmtMs(history.parallel.t4Ms)}</span>
-                    </div>
-                    <div className="cmp-footer-row">
-                      <span className="cmp-footer-ts">{history.parallel.timestamp}</span>
-                      {history.parallel.imageBase64 &&
-                        <a className="cmp-dl cmp-dl--scharr" href={history.parallel.imageBase64}
-                          download={`scharr_paralelo_${history.parallel.timestamp?.replace(/:/g,'-')}.png`}>⬇ PNG</a>}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Scharr Secuencial */}
-              {history.sequential && (
-                <div className="cmp-card cmp-card--scharr">
-                  <div className="cmp-card-header">
-                    <span className="cmp-algo-badge cmp-algo-badge--scharr">▶ Scharr Secuencial</span>
-                  </div>
-                  <div className="cmp-img-wrap">
-                    {history.sequential.imageBase64
-                      ? <img src={history.sequential.imageBase64} alt="Scharr S" className="cmp-photo" />
-                      : <div className="cmp-photo cmp-photo--empty">—</div>}
-                  </div>
-                  <div className="cmp-card-footer">
-                    <div className="cmp-times">
-                      <span className="cmp-time cmp-time--scharr">{fmtMs(history.sequential.totalMs)}</span>
-                      <span className="cmp-time-label">total</span>
-                    </div>
-                    <div className="cmp-threads">
-                      <span className="cmp-thread">T1 {fmtMs(history.sequential.t1Ms)}</span>
-                    </div>
-                    <div className="cmp-footer-row">
-                      <span className="cmp-footer-ts">{history.sequential.timestamp}</span>
-                      {history.sequential.imageBase64 &&
-                        <a className="cmp-dl cmp-dl--scharr" href={history.sequential.imageBase64}
-                          download={`scharr_secuencial_${history.sequential.timestamp?.replace(/:/g,'-')}.png`}>⬇ PNG</a>}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Canny, Sobel, Laplaciano, Prewitt */}
-              {['canny','sobel','laplaciano','prewitt'].filter(a => history[a]).map(alg => (
-                <div key={alg} className={`cmp-card cmp-card--${alg}`}>
-                  <div className="cmp-card-header">
-                    <span className={`cmp-algo-badge cmp-algo-badge--${alg}`}>
-                      {ALGORITHMS[alg].icon} {ALGORITHMS[alg].label}
-                    </span>
-                  </div>
-                  <div className="cmp-img-wrap">
-                    {history[alg].imageBase64
-                      ? <img src={history[alg].imageBase64} alt={alg} className="cmp-photo" />
-                      : <div className="cmp-photo cmp-photo--empty">—</div>}
-                  </div>
-                  <div className="cmp-card-footer">
-                    <div className="cmp-times">
-                      <span className={`cmp-time cmp-time--${alg}`}>{fmtMs(history[alg].totalMs)}</span>
-                      <span className="cmp-time-label">tiempo total</span>
-                    </div>
-                    <div className="cmp-footer-row">
-                      <span className="cmp-footer-ts">{history[alg].timestamp}</span>
-                      {history[alg].imageBase64 &&
-                        <a className={`cmp-dl cmp-dl--${alg}`} href={history[alg].imageBase64}
-                          download={`${alg}_${history[alg].timestamp?.replace(/:/g,'-')}.png`}>⬇ PNG</a>}
-                    </div>
-                  </div>
-                </div>
-              ))}
-
-            </div>
-          </section>
-        )}
-
-        {/* Debug */}
-
-        <section className="card debug-section">
-          <div className="debug-header" onClick={() => setShowLogs(v => !v)}>
-            <h2 className="section-title" style={{margin:0}}>🐛 Panel de Depuración</h2>
-            <div style={{display:'flex', gap:'0.5rem', alignItems:'center'}}>
-              <span className="log-count">{logs.length} entradas</span>
-              <button className="btn-icon" onClick={e => { e.stopPropagation(); clearLogs() }}>🗑</button>
-              <span className="debug-toggle">{showLogs ? '▲' : '▼'}</span>
-            </div>
-          </div>
-          {showLogs && (
-            <div className="log-panel" ref={logRef}>
-              {logs.length === 0
-                ? <p className="log-empty">Sin entradas aún.</p>
-                : logs.map((l, i) => (
-                  <div key={i} className={`log-entry log-${l.level}`}>
-                    <span className="log-ts">{l.ts}</span>
-                    <span className="log-msg">{l.msg}</span>
-                  </div>
-                ))
               }
             </div>
-          )}
-        </section>
+            <input id="file-input" type="file" accept=".rgb,image/*" style={{ display:'none' }} onChange={onFileInput} />
+            {file && (
+              <p className="file-name">
+                {(file.size/1024).toFixed(1)} KB {isRaw && <span className="rgb-badge">RAW</span>}
+              </p>
+            )}
+          </section>
 
+          {/* Dimensiones .rgb */}
+          {isRaw && (
+            <section className="sb-card dims-section">
+              <h3 className="sb-subtitle">Dimensiones RAW</h3>
+              <div className="dims-row">
+                <input id="input-width" type="number" min="1" placeholder="W"
+                    value={width} onChange={e => setWidth(e.target.value)} onBlur={buildRgbPreview} />
+                <span className="dim-sep">×</span>
+                <input id="input-height" type="number" min="1" placeholder="H"
+                    value={height} onChange={e => setHeight(e.target.value)} onBlur={buildRgbPreview} />
+              </div>
+            </section>
+          )}
+
+          {/* Elegir y Procesar Individual */}
+          <section className="sb-card">
+            <h3 className="sb-subtitle">Filtro Individual</h3>
+            <div className="sb-field">
+               <div className="select-wrapper">
+                 <select value={algorithm} onChange={(e) => {setAlgorithm(e.target.value); setResult(null); setError(null);}}>
+                   {Object.entries(ALGORITHMS).map(([key, cfg]) => (
+                     <option key={key} value={key}>{cfg.icon} {cfg.label}</option>
+                   ))}
+                 </select>
+               </div>
+            </div>
+
+            <div className="algo-controls">
+              {algorithm === 'scharr' ? (
+                <div className="buttons-col">
+                  <button onClick={() => process('parallel')} disabled={!!loading} className="btn-lotus btn-lotus-blue">
+                     {loading === 'scharr_parallel' ? <span className="spinner"/> : '⚡'} Paralelo (4 hilos)
+                  </button>
+                  <button onClick={() => process('sequential')} disabled={!!loading} className="btn-lotus btn-lotus-outline">
+                     {loading === 'scharr_sequential' ? <span className="spinner"/> : '▶'} Secuencial
+                  </button>
+                </div>
+              ) : (
+                <div className="buttons-col">
+                  <button onClick={() => process('sequential')} disabled={!!loading} className="btn-lotus btn-lotus-outline">
+                    {loading === algorithm ? <span className="spinner"/> : ALGORITHMS[algorithm]?.icon} Ejecutar {ALGORITHMS[algorithm]?.label}
+                  </button>
+                </div>
+              )}
+            </div>
+            {loading && !String(loading).startsWith('todos_') && <p className="loading-text">Procesando {ALGORITHMS[algorithm]?.label}…</p>}
+            {error && <p className="error-text">⚠ {error}</p>}
+          </section>
+
+          {/* Múltiples algoritmos */}
+          <section className="sb-card sb-card-batch">
+             <h3 className="sb-subtitle" style={{color:'#ed8936'}}>Mosaico (5 Algoritmos)</h3>
+             <div className="buttons-col">
+                <button onClick={() => process('parallel', 'todos')} disabled={!!loading} className="btn-lotus btn-lotus-accent">
+                   {loading === 'todos_parallel' ? <span className="spinner"/> : '⚡'} Concurrente (5 hilos)
+                </button>
+                <button onClick={() => process('sequential', 'todos')} disabled={!!loading} className="btn-lotus btn-lotus-secondary">
+                   {loading === 'todos_sequential' ? <span className="spinner"/> : '▶'} Secuencial
+                </button>
+             </div>
+             {loading && String(loading).startsWith('todos_') && <p className="loading-text" style={{color:'#ed8936'}}>Procesando Mosaico…</p>}
+          </section>
+
+        </div>
+        
+        <div className="sidebar-footer">
+           <span className="info-text">E Sincronizado. Always Available.</span>
+           <span className="info-text" style={{textAlign: 'right'}}>User Itano</span>
+        </div>
+      </aside>
+
+      {/* ── MAIN AREA ── */}
+      <main className="main-area">
+
+         {/* Top Bar Lotus Style */}
+         <div className="topbar">
+           <div className="topbar-logo">Detección de Bordes</div>
+           <div className="topbar-actions">
+           </div>
+         </div>
+
+         {/* Contenido / Rejilla */}
+         <div className="dashboard-content">
+            {totalGalleryImages === 0 && !preview && (
+               <div className="empty-state">
+                  <span className="empty-icon">🖼️</span>
+                  <p>Sube una imagen y selecciona un algoritmo para visualizar los resultados.</p>
+               </div>
+            )}
+
+            <div className="lotus-grid">
+
+               {/* 1. Tarjeta Original */}
+               {preview && (
+                  <div className="lotus-card lotus-card-original">
+                     <div className="lotus-img-area">
+                        <img src={preview} alt="Original" />
+                        <div className="lotus-overlay-badge">Original</div>
+                     </div>
+                     <div className="lotus-data-area">
+                        <h4>Imagen de Entrada</h4>
+                        <p>Documento de Origen</p>
+                        <div className="lotus-stats">
+                           <div className="lotus-stat">
+                              <span>Peso</span>
+                              <strong>{(file?.size/1024).toFixed(1)} KB</strong>
+                           </div>
+                           <div className="lotus-stat">
+                              <span>Modo</span>
+                              <strong>{isRaw ? 'RAW' : 'Img'}</strong>
+                           </div>
+                        </div>
+                     </div>
+                  </div>
+               )}
+
+               {/* Recorrer history para renderizar resultados */}
+               {['canny', 'sobel', 'laplaciano', 'prewitt'].filter(a => history[a]).map(a => (
+                  <div key={a} className={`lotus-card lotus-card-${a}`}>
+                     <div className="lotus-img-area">
+                        <img src={history[a].imageBase64} alt={a} />
+                        <div className="lotus-overlay-badge badge-algo">{ALGORITHMS[a].icon} {ALGORITHMS[a].label}</div>
+                     </div>
+                     <div className="lotus-data-area">
+                        <h4>{ALGORITHMS[a].label}</h4>
+                        <p>{ALGORITHMS[a].sub}</p>
+                        <div className="lotus-stats">
+                           <div className="lotus-stat">
+                              <span>Total</span>
+                              <strong>{fmtMs(history[a].totalMs)}</strong>
+                           </div>
+                           <div className="lotus-stat">
+                              <span>Link</span>
+                              <a href={history[a].imageBase64} download={`${a}.png`}>⬇ PNG</a>
+                           </div>
+                        </div>
+                     </div>
+                  </div>
+               ))}
+
+               {history.parallel && (
+                  <div className="lotus-card lotus-card-scharr">
+                     <div className="lotus-img-area">
+                        <img src={history.parallel.imageBase64} alt="Scharr Paralelo" />
+                        <div className="lotus-overlay-badge badge-algo">⚡ Scharr P.</div>
+                     </div>
+                     <div className="lotus-data-area">
+                        <h4>Scharr Paralelo</h4>
+                        <p>Segmentado en 4 hilos</p>
+                        <div className="lotus-stats">
+                           <div className="lotus-stat"><span>Time</span><strong>{fmtMs(history.parallel.totalMs)}</strong></div>
+                           <div className="lotus-stat"><span>T1</span><strong>{fmtMs(history.parallel.t1Ms)}</strong></div>
+                           <div className="lotus-stat"><span>T2</span><strong>{fmtMs(history.parallel.t2Ms)}</strong></div>
+                        </div>
+                     </div>
+                  </div>
+               )}
+               
+               {history.sequential && (
+                  <div className="lotus-card lotus-card-scharr">
+                     <div className="lotus-img-area">
+                        <img src={history.sequential.imageBase64} alt="Scharr Secuencial" />
+                        <div className="lotus-overlay-badge badge-algo">▶ Scharr S.</div>
+                     </div>
+                     <div className="lotus-data-area">
+                        <h4>Scharr Secuencial</h4>
+                        <p>1 solo hilo</p>
+                        <div className="lotus-stats">
+                           <div className="lotus-stat"><span>Time</span><strong>{fmtMs(history.sequential.totalMs)}</strong></div>
+                        </div>
+                     </div>
+                  </div>
+               )}
+
+            </div>
+            
+            {/* Si existe historial lote, lo pintamos al fondo como una row grande o integrado */}
+            {['todos_seq', 'todos_par'].filter(k => history[k]).map(cat => {
+               const isSeq = cat === 'todos_seq'
+               const res = history[cat]
+               const inner = res.results
+               if (!inner) return null;
+
+               return (
+                  <div key={cat} className="mosaico-section-wrapper mt-4">
+                     <h3 className="mosaico-group-title">{isSeq ? '▶ Mosaico 5 Algoritmos (Secuencial)' : '⚡ Mosaico 5 Algoritmos (Concurrente)'} — <span style={{color: '#ed8936'}}>{fmtMs(res.totalMs)}</span></h3>
+                     <div className="lotus-grid">
+                        {['scharr', 'sobel', 'canny', 'laplaciano', 'prewitt'].map(a => (
+                           <div key={a} className={`lotus-card lotus-card-${a}`}>
+                              <div className="lotus-img-area">
+                                 <img src={inner[a].imageBase64} alt={a} />
+                                 <div className="lotus-overlay-badge badge-algo">{ALGORITHMS[a].icon} {ALGORITHMS[a].label}</div>
+                              </div>
+                              <div className="lotus-data-area">
+                                 <h4>{ALGORITHMS[a].label}</h4>
+                                 <p>Tiempo de ejecución</p>
+                                 <div className="lotus-stats">
+                                    <div className="lotus-stat"><span>Ms</span><strong>{fmtMs(inner[a].totalMs)}</strong></div>
+                                 </div>
+                              </div>
+                           </div>
+                        ))}
+                     </div>
+                  </div>
+               )
+            })}
+
+         </div>
       </main>
     </div>
   )

@@ -6,39 +6,43 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * ScharrService - Aplica el operador Scharr para detección de bordes.
- *
- * El operador Scharr usa kernels 3×3 con pesos optimizados para mejor
- * simetría rotacional comparado con Sobel.
+ * ScharrService - Servicio dedicado para aplicar el operador matricial de Scharr.
+ * Es crucial y destaca porque integra un algoritmo avanzado de concurrencia 
+ * separando la imagen en cuadrantes procesados matemáticamente por vías separadas (hilos).
  */
 public class ScharrService {
 
-    // ─── Kernels de Scharr ─────────────────────────────────────────────────────
-    // Kernel horizontal Gx: detecta cambios de intensidad en el eje X (bordes verticales)
+    // ─── KERNELS DE SCHARR ─────────────────────────────────────────────────────
+    
+    // Matriz Convolutiva Horizontal Gx
+    // Es matemáticamente idéntica en rol predictivo a Sobel, pero optimiza la sensibilidad
+    // con un pico (10 y 3 vs 2 y 1) dando mucha mejor isotropía rotacional a curvas diagonales sutiles.
     private static final int[][] KERNEL_X = {
         { -3,  0,  3 },
         {-10,  0, 10 },
         { -3,  0,  3 }
     };
 
-    // Kernel vertical Gy: detecta cambios de intensidad en el eje Y (bordes horizontales)
+    // Matriz Convolutiva Vertical Gy
     private static final int[][] KERNEL_Y = {
         { -3, -10, -3 },
         {  0,   0,  0 },
         {  3,  10,  3 }
     };
 
-    // ─── Resultado del procesamiento ───────────────────────────────────────────
+    // ─── CLASE ENVOLTORIO RESULTADOS ───────────────────────────────────────────
     /**
-     * Contenedor de resultados: imagen procesada y tiempos de cada hilo.
+     * DTO (Data Transfer Object) estático para la respuesta.
+     * Transporta un manojo de datos unificados desde los métodos algorítmicos hacia el Servlet,
+     * especialmente valiosos cuando queremos mapear demoras transaccionales de paralelismo por Hilo.
      */
     public static class ProcessResult {
-        public final BufferedImage image;   // Imagen con bordes detectados
-        public final long t1Nanos;          // Tiempo del hilo 1
-        public final long t2Nanos;          // Tiempo del hilo 2 (0 si secuencial)
-        public final long t3Nanos;          // Tiempo del hilo 3 (0 si secuencial)
-        public final long t4Nanos;          // Tiempo del hilo 4 (0 si secuencial)
-        public final long totalNanos;       // Tiempo total de la operación completa
+        public final BufferedImage image;   // Imagen final procesada de mapa de bits (unidos)
+        public final long t1Nanos;          // Cuello de botella en resolver porción 1 
+        public final long t2Nanos;          // ... porción 2 (Omitido/0L si corremos Secuencialmente)
+        public final long t3Nanos;          // ... porción 3 
+        public final long t4Nanos;          // ... porción 4 
+        public final long totalNanos;       // Sumatoria completa transcurrida en reloj absoluto
 
         public ProcessResult(BufferedImage image, long t1, long t2, long t3, long t4, long total) {
             this.image      = image;
@@ -50,210 +54,186 @@ public class ScharrService {
         }
     }
 
-    // ─── Paso 1: Conversión a Escala de Grises ─────────────────────────────────
+    // ─── PASO 1: LUMINANCIA (Básica plana) ─────────────────────────────────
     /**
-     * Convierte una imagen a escala de grises usando la fórmula de luminancia ITU-R BT.601:
-     *   Gray = 0.299·R + 0.587·G + 0.114·B
-     * El ojo humano es más sensible al verde, por eso tiene mayor peso.
+     * Motor iterativo plano de conversión a escala de grises bajo la norma fotométrica ITU-R BT.601
+     * Genera Array de Integers (velocidad RAM altísima vs setRGB en tiempo real)
      *
-     * @param src Imagen fuente en color (RGB o ARGB)
-     * @return Arreglo plano de enteros con valores de gris [0..255]
+     * @param src Objeto de Imagen nativo Java.
+     * @return Arreglo primitivo aplanado (flat map vector) de intensidades lumínicas.
      */
     private int[] toGrayPixels(BufferedImage src) {
         int width  = src.getWidth();
         int height = src.getHeight();
+        
+        // Multiplicamos como 1 dimensión gigante para evitar ineficiencias de memoria de doble punteros [][]
         int[] gray = new int[width * height];
 
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
-                // Obtener el valor RGB del píxel actual
                 int rgb = src.getRGB(x, y);
 
-                // Separar los canales usando máscaras de bits
-                int r = (rgb >> 16) & 0xFF; // Canal Rojo
-                int g = (rgb >>  8) & 0xFF; // Canal Verde
-                int b = (rgb      ) & 0xFF; // Canal Azul
+                // Shifts bitwise a la derecha 
+                int r = (rgb >> 16) & 0xFF; 
+                int g = (rgb >>  8) & 0xFF;
+                int b = (rgb      ) & 0xFF; 
 
-                // Aplicar la fórmula de luminancia
+                // Al crear grises, ponderamos por la sensibilidad y curvatura visual humana al VERDE.
                 gray[y * width + x] = (int)(0.299 * r + 0.587 * g + 0.114 * b);
             }
         }
         return gray;
     }
 
-    // ─── Paso 2: Convolución Scharr sobre un rango de filas ───────────────────
+    // ─── PASO 2: CONVOLUCIÓN SCHARR SEGMENTADA ──────────────────────────────────
     /**
-     * Aplica los kernels Scharr Gx y Gy sobre un rango de filas de la imagen.
-     * Este método es llamado por cada hilo con su propio rango (startRow → endRow).
+     * Aplica el barrido matricial X,Y pero delimitadamente a índices definidos (startRow a endRow).
+     * Por lo cual, es una función multi-instanciable ("Thread-Safe") y compartible a subprocesos!
      *
-     * Para cada píxel (x, y) dentro del rango:
-     *   1. Recorre los 9 vecinos del kernel 3×3
-     *   2. Multiplica cada vecino por su peso en Gx y Gy
-     *   3. Calcula el gradiente: G = sqrt(Gx² + Gy²)
-     *   4. Clampea G a [0, 255] y lo asigna al píxel de salida
-     *
-     * Los píxeles del borde (primera y última fila/columna) se ignoran
-     * para evitar accesos fuera del buffer.
-     *
-     * @param gray     Arreglo de grises de la imagen completa (input)
-     * @param out      Arreglo de salida donde se escriben los bordes detectados
-     * @param width    Ancho de la imagen en píxeles
-     * @param startRow Primera fila a procesar (inclusive)
-     * @param endRow   Última fila a procesar (exclusive)
+     * @param gray     Matriz plana input de origen
+     * @param out      Objeto compartido flat-array por referencia para guardar el output concurrente 
+     * @param width    Variable vital para deducir la grilla y saltar renglón matemáticamente (y * width)
+     * @param startRow Límite techo superior que este thead tocará
+     * @param endRow   Límite base inferior intocable que se delegará a otro thead
      */
     private void applyScharr(int[] gray, int[] out, int width, int startRow, int endRow) {
-        // Empezar desde max(1, startRow) para no acceder a fila -1
+        // Obviar desbordar primera línea general (-1) obligando el Math.Max a arrancar seguro de mínimo 1
         int fromRow = Math.max(1, startRow);
-        // Terminar en min(endRow, height-1) para no acceder fuera del buffer
-        int toRow   = endRow; // el llamador ya limitó a height-1
+        int toRow   = endRow; 
 
         for (int y = fromRow; y < toRow; y++) {
             for (int x = 1; x < width - 1; x++) {
-                int gx = 0; // Acumulador para el gradiente horizontal
-                int gy = 0; // Acumulador para el gradiente vertical
+                int gx = 0; 
+                int gy = 0; 
 
-                // Recorrer los 9 píxeles vecinos del kernel 3×3
-                for (int ky = -1; ky <= 1; ky++) {       // fila del kernel: -1, 0, 1
-                    for (int kx = -1; kx <= 1; kx++) {   // columna del kernel: -1, 0, 1
-                        // Valor de gris del vecino
+                for (int ky = -1; ky <= 1; ky++) {       
+                    for (int kx = -1; kx <= 1; kx++) {   
+                        
+                        // Extraer el índice lineal (1D simulando 2D matrix) para posicionarse.
                         int neighbor = gray[(y + ky) * width + (x + kx)];
 
-                        // Acumular pesos de cada kernel
                         gx += KERNEL_X[ky + 1][kx + 1] * neighbor;
                         gy += KERNEL_Y[ky + 1][kx + 1] * neighbor;
                     }
                 }
 
-                // Calcular magnitud del gradiente: G = sqrt(Gx² + Gy²)
+                // Vector resultante del calculo local pitagórico (intensidad luminosa detectada en gradientes)
                 int magnitude = (int) Math.sqrt(gx * gx + gy * gy);
 
-                // Clampear el valor a [0, 255] para que sea un valor de píxel válido
+                // Capping y fijado final a la variable de Referencias que escupira al Main Thread original general `out`.
                 out[y * width + x] = Math.min(255, magnitude);
             }
         }
     }
 
-    // ─── Paso 3a: Modo Paralelo — 4 hilos concurrentes ────────────────────────
+    // ─── PASO 3-A: CONCURRENCIA MATEMÁTICA ──────────────────────────────────
     /**
-     * Procesa la imagen dividiendo su altura en CUATRO franjas iguales:
-     *  - Hilo 1 (T1): filas 0         → height/4     (cuarto superior)
-     *  - Hilo 2 (T2): filas height/4  → height/2     (segundo cuarto)
-     *  - Hilo 3 (T3): filas height/2  → 3*height/4   (tercer cuarto)
-     *  - Hilo 4 (T4): filas 3*height/4 → height      (cuarto inferior)
+     * Fracciona explícitamente en partes porcentuales y las distribuye.
+     * Funciona fantástico para acelerar procesamiento masivo en hardware multinúcleo.
      *
-     * Los 4 hilos se lanzan simultáneamente con ExecutorService.invokeAll().
-     * El tiempo total refleja el cuello de botella (el hilo más lento).
-     *
-     * @param input Imagen de entrada (cualquier tamaño m×n)
-     * @return ProcessResult con la imagen fusionada, T1-T4 y tiempo total
+     * @param input Buffered crudo.
+     * @return Wrapper Result lleno de tiempos por Thead paralelos evaluados.
      */
     public ProcessResult processParallel(BufferedImage input) throws Exception {
         int width  = input.getWidth();
         int height = input.getHeight();
 
-        // Dividir la imagen en 4 franjas horizontales iguales
-        int q1 = height / 4;         // fin del 1er cuarto
-        int q2 = height / 2;         // fin del 2do cuarto
-        int q3 = 3 * height / 4;     // fin del 3er cuarto
+        // 4 Cuadrantes exactos
+        int q1 = height / 4;         
+        int q2 = height / 2;         
+        int q3 = 3 * height / 4;     
 
-        // Convertir toda la imagen a grises antes de procesar
         int[] gray = toGrayPixels(input);
-
-        // Arreglo de salida compartido (cada hilo escribe en su propio rango)
         int[] out = new int[width * height];
 
-        // Tiempo de inicio de la operación completa
+        // Anclaje temporal de inicio de flujo complejo
         long appStart = System.nanoTime();
 
-        // Pool de exactamente 4 hilos
+        // Alocación de 4 CPUs virtuales Java con el pool FIJO estático (No ampliable)
         ExecutorService executor = Executors.newFixedThreadPool(4);
 
-        // Hilo 1 (T1): filas 0 → q1
+        // Hilo 1 - Ejecutando su cuarta parte de cielo
         Callable<Long> task1 = () -> {
             long start = System.nanoTime();
             applyScharr(gray, out, width, 0, q1);
-            return System.nanoTime() - start;
+            return System.nanoTime() - start; // Retorna duración interna de subhilo
         };
 
-        // Hilo 2 (T2): filas q1 → q2
+        // Hilo 2 - Ecuador superior
         Callable<Long> task2 = () -> {
             long start = System.nanoTime();
             applyScharr(gray, out, width, q1, q2);
             return System.nanoTime() - start;
         };
 
-        // Hilo 3 (T3): filas q2 → q3
+        // Hilo 3 - Ecuador inferior
         Callable<Long> task3 = () -> {
             long start = System.nanoTime();
             applyScharr(gray, out, width, q2, q3);
             return System.nanoTime() - start;
         };
 
-        // Hilo 4 (T4): filas q3 → height-1
+        // Hilo 4 - Suelo
         Callable<Long> task4 = () -> {
             long start = System.nanoTime();
             applyScharr(gray, out, width, q3, height - 1);
             return System.nanoTime() - start;
         };
 
-        // Lanzar los 4 hilos al mismo tiempo y esperar a que todos terminen
+        // Activamos todos los theads suspendiendo a la espera que el más lento concluya (invokeAll sync block)
         var futures = executor.invokeAll(java.util.List.of(task1, task2, task3, task4));
-        executor.shutdown();
+        executor.shutdown(); // Limpiando huella RAM
 
+        // Recolectar lo que las promesas (.get()) arrojaron como valor long
         long t1 = futures.get(0).get();
         long t2 = futures.get(1).get();
         long t3 = futures.get(2).get();
         long t4 = futures.get(3).get();
 
-        // Tiempo total medido desde el lanzamiento hasta que el último hilo terminó
         long totalTime = System.nanoTime() - appStart;
 
+        // Mandar el mapa vectorial out plano a rasterizar.
         BufferedImage result = buildImage(out, width, height);
         return new ProcessResult(result, t1, t2, t3, t4, totalTime);
     }
 
-    // ─── Paso 3b: Modo Secuencial — 1 solo hilo ───────────────────────────────
+    // ─── PASO 3-B: LEGACY SECUENCIAL NATIVO ──────────────────────────────────
     /**
-     * Procesa toda la imagen en un solo hilo, sin dividir filas.
-     * T2, T3 y T4 son 0 porque no existen.
-     *
-     * @param input Imagen de entrada
-     * @return ProcessResult con la imagen procesada (t2,t3,t4=0) y tiempo total
+     * Un bypass monohilo directo sin particionar, enviando toda la altura de golpe.
      */
     public ProcessResult processSequential(BufferedImage input) {
         int width  = input.getWidth();
         int height = input.getHeight();
+        
         int[] gray = toGrayPixels(input);
         int[] out  = new int[width * height];
 
+        // Inversión de bloque secuencial midiendo la tarea en bloque macizo de código
         long start = System.nanoTime();
         applyScharr(gray, out, width, 1, height - 1);
         long t1 = System.nanoTime() - start;
 
         BufferedImage result = buildImage(out, width, height);
-        // t2, t3, t4 = 0 porque no hay hilos adicionales en modo secuencial
+        // Semánticamente los T2, T3, T4 pierden existencia objetiva. Son 0 L.
         return new ProcessResult(result, t1, 0L, 0L, 0L, t1);
     }
 
-    // ─── Paso 4: Construir el BufferedImage de salida ─────────────────────────
+    // ─── RE-ENSAMBLE (Conversión Flat a Matrix Rasterizada) ────────────────
     /**
-     * Convierte el arreglo plano de magnitudes [0..255] a un BufferedImage
-     * en escala de grises (TYPE_BYTE_GRAY).
-     *
-     * @param pixels Arreglo con magnitudes del gradiente Scharr por píxel
-     * @param width  Ancho de la imagen
-     * @param height Alto de la imagen
-     * @return BufferedImage lista para ser guardada como PNG
+     * Trasladar array primitivo lógico en BufferedImage objeto que JAVA e IO entiendan.
      */
     private BufferedImage buildImage(int[] pixels, int width, int height) {
-        // Crear imagen de salida en escala de grises
+        
+        // Emplea TYPE_BYTE_GRAY para consumir apenas 1 B per pixel en lugar de cuadruplicarlo (ARGB)
         BufferedImage img = new BufferedImage(width, height, BufferedImage.TYPE_BYTE_GRAY);
 
+        // Despeje
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
-                int v = pixels[y * width + x]; // Valor de magnitud del gradiente
+                // Saca de línea vectorial plana por matemática 
+                int v = pixels[y * width + x]; 
 
-                // Empaquetar el valor en formato RGB (R=G=B=v para gris)
+                // Imposiciona repetición hexadecimal idéntica forzando colores grises equivalentes.
                 int rgb = (v << 16) | (v << 8) | v;
                 img.setRGB(x, y, rgb);
             }
