@@ -2,8 +2,9 @@ import { useState, useCallback, useRef } from 'react'
 import './App.css'
 
 const API_CANDIDATES = [
-  'http://localhost:8080/api/process',
+  './api/process',
   'http://localhost:8080/algoritmogris/api/process',
+  'http://localhost:8080/api/process',
 ]
 
 // ── Configuración de algoritmos ───────────────────────────────────────────────

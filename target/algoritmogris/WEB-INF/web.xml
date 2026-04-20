@@ -7,6 +7,10 @@
 
     <display-name>Scharr Edge Detection</display-name>
 
+    <!-- Página de bienvenida: React se sirve desde index.html generado por Vite -->
+    <welcome-file-list>
+        <welcome-file>index.html</welcome-file>
+    </welcome-file-list>
 
     <!--
         NOTA: EdgeDetectionServlet NO se declara aquí porque ya usa
